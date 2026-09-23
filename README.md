@@ -18,14 +18,14 @@ This repository is being built toward a **seven-day founding-pilot alpha**, not 
 
 ## Non-negotiable boundaries
 
-- Every tenant-owned row has an `organization_id` and enforced PostgreSQL Row Level Security.
+- Every tenant-owned row has an organization_id and enforced PostgreSQL Row Level Security.
 - Organization memory is available only inside the same organization and only after approval.
 - Individual accounts receive private learner memory only. Their mistakes and solutions never become shared cross-user memory.
 - Tenant identity comes from verified authentication and membership, never from a client-supplied organization ID.
 - Child-facing products send pseudonymous learner IDs and the minimum necessary learning evidence.
 - Deterministic rules, retrieval, cache, and approved memory run before paid model generation.
 - No service-role key is exposed to a browser.
-- No autonomous production deployment, secret change, billing change, migration against production, or merge to `main`.
+- No autonomous production deployment, secret change, billing change, migration against production, or destructive data action.
 
 ## Repository map
 
@@ -41,15 +41,16 @@ This repository is being built toward a **seven-day founding-pilot alpha**, not 
 
 GitHub is the coordination source of truth.
 
-1. Hermes pulls `main`.
-2. Hermes selects the first ready task from `coordination/TASK-QUEUE.json`.
-3. Work happens on `hermes/<task-id>-<slug>`.
+1. Hermes pulls main.
+2. Hermes selects the first ready task from coordination/TASK-QUEUE.json.
+3. Work happens on hermes/<task-id>-<slug>.
 4. Hermes tests, commits, pushes, and opens a pull request.
 5. Codex reviews scope, security, RLS, tests, and CI.
-6. A human owns merge and production deployment decisions.
+6. Codex may merge non-production alpha work only after every gate in AGENTS.md passes.
+7. Production deployment, production migrations, secrets, billing, and destructive actions remain human-approved.
 
-On Windows, run `scripts/install-hermes-worker.ps1` once after cloning to register the local worker.
+On Windows, run scripts/install-hermes-worker.ps1 once after cloning to register the local worker.
 
 ## Status
 
-Foundation initialized. The next executable task is `ALIA-001`.
+Foundation initialized. The next executable task is ALIA-001.
