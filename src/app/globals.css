@@ -1,0 +1,18 @@
+:root {
+  color-scheme: light dark;
+  --surface: #0f1720;
+  --ink: #f4f6f8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 2rem;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}

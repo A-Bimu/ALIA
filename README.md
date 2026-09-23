@@ -31,6 +31,7 @@ This repository is being built toward a **seven-day founding-pilot alpha**, not 
 
 - [Product and security specification](docs/ALIA-V1-SPEC.md)
 - [Technical architecture](docs/ARCHITECTURE.md)
+- [Local development and commands](docs/DEVELOPMENT.md)
 - [Agent operating rules](AGENTS.md)
 - [Hermes execution prompt](coordination/HERMES-PROMPT.md)
 - [Machine-readable task queue](coordination/TASK-QUEUE.json)
@@ -70,4 +71,6 @@ The worker starts immediately, then runs every 15 minutes while the Windows user
 
 ## Status
 
-Foundation initialized. The next executable task is ALIA-001.
+Foundation implemented. ALIA-001 (foundation and executable contract) is complete on
+`hermes/ALIA-001-foundation-contract`; the next ready task is ALIA-002 (tenant identity, schema, and RLS
+proof). Setup and command reference: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).

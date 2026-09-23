@@ -3,9 +3,11 @@
 !.env.example
 node_modules/
 .next/
+next-env.d.ts
 coverage/
 dist/
 build/
+*.tsbuildinfo
 *.log
 .DS_Store
 .vscode/
