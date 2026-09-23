@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "project": "Adaptive Learning Intelligence Agent",
+  "updated_at": "2026-09-23T13:46:01.248Z",
+  "release": {
+    "name": "Founding-Pilot Alpha",
+    "target_days": 7,
+    "started_on": "2026-09-23",
+    "claim": "controlled alpha, not full production"
+  },
+  "workflow": {
+    "branch_pattern": "hermes/<task-id>-<slug>",
+    "source_of_truth": "main",
+    "allowed_statuses": ["blocked", "ready", "in_progress", "completed"],
+    "merge_rule": "Codex may merge non-production work only after every gate in AGENTS.md passes"
+  },
+  "tasks": [
+    {
+      "id": "ALIA-001",
+      "phase": 1,
+      "title": "Foundation and executable contract",
+      "status": "ready",
+      "priority": "P0",
+      "estimated_hours": 5,
+      "depends_on": [],
+      "scope": [
+        "Scaffold the TypeScript modular monolith",
+        "Add typed environment validation and a secret-free .env.example",
+        "Add health endpoint, structured errors, trace IDs, test harness, lint, typecheck, and build scripts",
+        "Document local startup and test commands"
+      ],
+      "acceptance_criteria": [
+        "A clean checkout installs and starts from documented commands",
+        "GET /api/v1/health returns a typed healthy response without sensitive data",
+        "Lint, typecheck, unit tests, and production build pass",
+        "No credentials or production deployment are introduced"
+      ]
+    },
+    {
+      "id": "ALIA-002",
+      "phase": 2,
+      "title": "Tenant identity, schema, and RLS proof",
+      "status": "blocked",
+      "priority": "P0",
+      "estimated_hours": 10,
+      "depends_on": ["ALIA-001"],
+      "scope": [
+        "Create organizations, memberships, learners, learning events, learner state, memory, decision, usage, budget, and audit migrations",
+        "Enable and force RLS on every tenant-owned table",
+        "Implement trusted organization resolution and role checks",
+        "Create organization-versus-organization and individual-workspace isolation tests"
+      ],
+      "acceptance_criteria": [
+        "Normal request paths do not use a service-role bypass",
+        "Organization A cannot perform any CRUD operation on organization B rows",
+        "Suspended membership loses access",
+        "Individual workspaces cannot create or read organization-shared memory",
+        "Migration and isolation tests pass from a clean database"
+      ]
+    },
+    {
+      "id": "ALIA-003",
+      "phase": 3,
+      "title": "Learning-event and mastery loop",
+      "status": "blocked",
+      "priority": "P0",
+      "estimated_hours": 8,
+      "depends_on": ["ALIA-002"],
+      "scope": [
+        "Implement idempotent POST /api/v1/events",
+        "Implement deterministic evidence weighting, mastery bands, confidence, and misconception rules",
+        "Store algorithm version and evidence trail",
+        "Add outcome recording"
+      ],
+      "acceptance_criteria": [
+        "Duplicate external event IDs do not double-apply evidence",
+        "Learner state updates are deterministic and tenant-isolated",
+        "Rule behavior has boundary and regression tests",
+        "Sensitive raw payloads are absent from logs"
+      ]
+    },
+    {
+      "id": "ALIA-004",
+      "phase": 4,
+      "title": "Governed memory and cost controls",
+      "status": "blocked",
+      "priority": "P0",
+      "estimated_hours": 10,
+      "depends_on": ["ALIA-003"],
+      "scope": [
+        "Implement private learner memory",
+        "Implement organization memory candidate, approval, versioning, expiry, and retrieval",
+        "Add deterministic fingerprints, duplicate prevention, cache metadata, budgets, usage ledger, timeouts, retries, and circuit breaker",
+        "Prove an approved-memory hit skips model generation"
+      ],
+      "acceptance_criteria": [
+        "Only approved active memory is retrievable inside its organization",
+        "Shared memory contains no direct learner identifier or raw chat",
+        "Individual workspaces remain private-only",
+        "Budget exhaustion blocks provider calls safely",
+        "Memory hit, cache, and circuit-breaker paths are covered by tests"
+      ]
+    },
+    {
+      "id": "ALIA-005",
+      "phase": 5,
+      "title": "Adaptive decision and grounded tutor",
+      "status": "blocked",
+      "priority": "P0",
+      "estimated_hours": 10,
+      "depends_on": ["ALIA-004"],
+      "scope": [
+        "Implement POST /api/v1/adapt and POST /api/v1/tutor",
+        "Add provider-neutral Meta Llama adapter and small-versus-strong route policy",
+        "Validate structured model output and add deterministic fallback",
+        "Add age-aware policy and curriculum grounding boundary"
+      ],
+      "acceptance_criteria": [
+        "Responses include trace, source, reason codes, and review recommendation",
+        "Model failure falls back without breaking the partner product",
+        "Organization, budget, memory, and safety decisions cannot be overridden by model output",
+        "Provider calls and estimated costs are auditable without storing child personal data"
+      ]
+    },
+    {
+      "id": "ALIA-006",
+      "phase": 6,
+      "title": "Pilot console, SDK, and integration proof",
+      "status": "blocked",
+      "priority": "P1",
+      "estimated_hours": 9,
+      "depends_on": ["ALIA-005"],
+      "scope": [
+        "Add a minimal educator console for learner state, memory approval, budget, and traces",
+        "Add a typed TypeScript client",
+        "Create one mock partner integration proving ALIA is optional and independently deployable",
+        "Add an end-to-end golden path"
+      ],
+      "acceptance_criteria": [
+        "Educator permissions are enforced server-side",
+        "An approved memory candidate can be reviewed and then reused",
+        "The client handles typed unavailable and budget responses",
+        "The mock partner continues with a deterministic local fallback when ALIA is unavailable"
+      ]
+    },
+    {
+      "id": "ALIA-007",
+      "phase": 7,
+      "title": "Staging hardening and pilot evidence",
+      "status": "blocked",
+      "priority": "P0",
+      "estimated_hours": 8,
+      "depends_on": ["ALIA-006"],
+      "scope": [
+        "Run security, RLS, deletion, rate-limit, budget, recovery, and smoke tests",
+        "Add staging runbook, incident rollback, known limitations, and privacy checklist",
+        "Prepare a controlled demo data set and evidence report",
+        "Deploy only to staging after explicit approval and valid credentials"
+      ],
+      "acceptance_criteria": [
+        "CI is green and no critical or high known issue remains",
+        "RLS denial, memory isolation, fallback, and budget evidence is recorded",
+        "Rollback and known limitations are documented",
+        "Marketing language says founding-pilot alpha and makes no unsupported impact claim"
+      ]
+    }
+  ]
+}
