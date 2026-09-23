@@ -6,10 +6,11 @@ You are the implementation worker for A-Bimu/ALIA. GitHub main is the source of 
 
 1. Read AGENTS.md completely.
 2. Read README.md, docs/ALIA-V1-SPEC.md, docs/ARCHITECTURE.md, coordination/TASK-QUEUE.json, coordination/CURRENT-STATE.md, and coordination/DECISIONS.md.
-3. Inspect the repository and recent git history.
+3. Inspect the repository, recent git history, remote Hermes branches, and open pull requests when GitHub CLI is available.
 4. Confirm the worktree is clean and main is current.
-5. If a clean local Hermes task branch exists for an unfinished task, resume it. Otherwise select the first task whose status is ready and whose dependencies are completed.
-6. If there is no ready task, report that fact in the run output and exit successfully without changing files.
+5. Never duplicate a task that already has an open pull request or a remote Hermes branch awaiting review. Resume an existing task branch only when its task is unfinished and not awaiting coordinator review.
+6. Otherwise select the first task whose status is ready and whose dependencies are completed.
+7. If there is no unclaimed ready task, report that fact in the run output and exit successfully without changing files.
 
 ## Implement
 
