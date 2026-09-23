@@ -15,10 +15,15 @@ try {
         exit 0
     }
 
-    foreach ($command in @("git", "hermes")) {
+    foreach ($command in @("git", "gh", "hermes")) {
         if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
             throw "Required command not found: $command"
         }
+    }
+
+    gh auth status 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "GitHub CLI is not authenticated. Run gh auth login once."
     }
 
     $resolvedRepo = (Resolve-Path -LiteralPath $RepoPath).Path
