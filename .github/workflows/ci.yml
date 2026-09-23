@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alia-ci
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate coordination queue
+        shell: bash
+        run: |
+          python -m json.tool coordination/TASK-QUEUE.json >/dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          queue = json.loads(Path("coordination/TASK-QUEUE.json").read_text())
+          tasks = queue["tasks"]
+          ids = [task["id"] for task in tasks]
+          assert len(ids) == len(set(ids)), "Task IDs must be unique"
+          allowed = set(queue["workflow"]["allowed_statuses"])
+          assert all(task["status"] in allowed for task in tasks), "Unknown task status"
+          known = set(ids)
+          assert all(set(task["depends_on"]) <= known for task in tasks), "Unknown dependency"
+          PY
+
+      - name: Detect application
+        id: app
+        shell: bash
+        run: |
+          if [ -f package.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "Application scaffold is pending ALIA-001."
+          fi
+
+      - name: Set up Node
+        if: steps.app.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install and verify application
+        if: steps.app.outputs.present == 'true'
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+          npm run lint --if-present
+          npm run typecheck --if-present
+          npm run test --if-present
+          npm run build --if-present
