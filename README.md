@@ -49,7 +49,24 @@ GitHub is the coordination source of truth.
 6. Codex may merge non-production alpha work only after every gate in AGENTS.md passes.
 7. Production deployment, production migrations, secrets, billing, and destructive actions remain human-approved.
 
-On Windows, run scripts/install-hermes-worker.ps1 once after cloning to register the local worker.
+## One-time Hermes link on Windows
+
+Requirements: git, authenticated GitHub CLI, and the hermes command on PATH.
+
+Run this in PowerShell:
+
+~~~powershell
+gh auth status
+$aliaRepo = Join-Path $env:USERPROFILE "ALIA"
+if (Test-Path (Join-Path $aliaRepo ".git")) {
+    git -C $aliaRepo pull --ff-only
+} else {
+    gh repo clone A-Bimu/ALIA $aliaRepo
+}
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $aliaRepo "scripts\install-hermes-worker.ps1") -RepoPath $aliaRepo
+~~~
+
+The worker starts immediately, then runs every 15 minutes while the Windows user is signed in. Logs are stored under LocalAppData\Hermes\ALIA\logs.
 
 ## Status
 
