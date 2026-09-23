@@ -18,10 +18,15 @@ if (-not (Test-Path -LiteralPath $workerPath)) {
     throw "Worker script not found: $workerPath"
 }
 
-foreach ($command in @("git", "hermes")) {
+foreach ($command in @("git", "gh", "hermes")) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
         throw "Required command not found or not on PATH: $command"
     }
+}
+
+gh auth status 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "GitHub CLI is not authenticated. Run gh auth login once, then rerun this installer."
 }
 
 $taskName = "ALIA-Hermes-Worker"
