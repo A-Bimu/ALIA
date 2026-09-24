@@ -18,6 +18,14 @@ const config = [
       'no-console': 'error',
     },
   },
+  {
+    // Operator CLIs in scripts/ print for the human running them rather than for a
+    // request path, so console output is intentional there.
+    files: ['scripts/**/*.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
 ];
 
 export default config;

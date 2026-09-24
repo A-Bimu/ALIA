@@ -41,3 +41,28 @@ Use deterministic evidence weighting in the synchronous alpha. Retain PyTorch as
 Status: accepted, 2026-09-23
 
 Hermes implements one queued task per branch and pull request. Codex reviews and may merge non-production changes only after defined gates pass. Production actions remain human-approved.
+
+## ADR-008: Server-side PostgreSQL access with SET LOCAL ROLE and the verified claim
+
+Status: accepted, 2026-09-24 (ALIA-002)
+
+ALIA's server connects to PostgreSQL with `pg` rather than through PostgREST for the
+alpha. Each tenant request runs in one transaction that enters a restricted NOLOGIN
+role (`alia_app`) with `set local role` and publishes the verified token subject as a
+transaction-local `request.jwt.claim.sub`, which is the same claim shape Supabase uses
+in its own RLS helpers. Benefits: policies are the only access decision, no credential
+for the application role exists anywhere, the path is testable against any PostgreSQL
+without the Supabase stack, and `auth.uid()`-style behaviour is available by defining
+`app.current_user_id()` ourselves. Costs: ALIA owns the transaction wrapper and must keep
+the claim contract stable. Supabase's `authenticated` role plays the scoped login role in
+staging; only named administrative background jobs use the service role.
+
+## ADR-009: Real PostgreSQL in the test harness
+
+Status: accepted, 2026-09-24 (ALIA-002)
+
+Forced RLS, policy recursion, composite foreign keys, and role privileges cannot be
+proved with a mock. The request-path suites therefore run against a real PostgreSQL 18.
+CI starts a service container and passes `ALIA_TEST_DATABASE_URL`. Locally the harness
+starts the pinned `embedded-postgres` devDependency, which needs no Docker and no
+administrator rights; it is a test-only dependency and not part of the deployed service.

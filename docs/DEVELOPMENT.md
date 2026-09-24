@@ -10,8 +10,10 @@ and the boundaries that apply while working on it.
 - npm 10 or newer (`npm --version`);
 - git.
 
-Nothing else is required for the alpha foundation: no database, no provider key,
-no paid infrastructure.
+Nothing else is required to start the service: no database, no provider key, no paid
+infrastructure. The migration and RLS suites need a real PostgreSQL 18. CI provides
+one as a service container; locally the test harness starts one by itself from the
+`embedded-postgres` devDependency (no Docker, no administrator rights).
 
 ## Setup
 
@@ -35,8 +37,10 @@ endpoint.
 | `npm start` | Serve the production build |
 | `npm run lint` | ESLint over the repository |
 | `npm run typecheck` | `tsc --noEmit` over src and tests |
-| `npm test` | Vitest unit and integration suites |
+| `npm test` | Vitest unit and integration suites (starts a local PostgreSQL for the RLS suites) |
 | `npm run test:watch` | Vitest in watch mode |
+| `npm run test:rls` | Only the migration, RLS isolation, and identity suites |
+| `npm run db:migrate` | Apply pending migrations to `DATABASE_URL` |
 | `npm run verify` | lint, typecheck, test, and build in order |
 
 ## Smoke test
@@ -76,6 +80,55 @@ when a supplied value fails validation, for example an unknown `ALIA_ENV` or a
 malformed `SUPABASE_URL`. The public `environment` field is taken from the
 validated schema only; when validation fails it reports the fixed label
 `unknown`, so an invalid value is never echoed into a response.
+
+## Database, migrations, and tenancy
+
+The schema lives in `supabase/migrations/` as plain SQL, applied in filename order by
+`npm run db:migrate` and recorded in `app.schema_migrations` with a sha256 checksum. A
+migration that changed after it was applied is refused, so a shared database cannot
+drift silently. Each file runs in its own transaction and rolls back completely on
+failure.
+
+~~~bash
+export DATABASE_URL="postgres://user:password@host:5432/postgres"
+npm run db:migrate
+~~~
+
+Rules the code and the database enforce together:
+
+- **Tenant identity comes from membership.** `resolvePrincipal` verifies the bearer
+  token (`SUPABASE_JWT_SECRET`), then reads the principal's active membership row
+  inside an RLS-scoped transaction. A body or query value named `organization_id`,
+  `organizationId`, `org_id`, or `tenant_id` is refused with `VALIDATION_ERROR`.
+- **The request path runs as `alia_app`.** `withPrincipalScope` / `withTenant` open one
+  transaction, `set local role alia_app`, publish the verified claim as
+  `request.jwt.claim.sub`, and then verify the session is not a superuser and does not
+  hold `BYPASSRLS`. A privileged role (a service role, a database owner) is refused as
+  configuration before any query runs, and the refusal is also checked on the live
+  session.
+- **RLS is enabled and forced on every tenant table.** Policies are attached to
+  `alia_app` only; a table with a missing policy denies by default.
+- **Individual workspaces are private-only.** `organization_memory` carries
+  `account_type` pinned to `organization` and a composite foreign key to
+  `organizations(id, account_type)`, so an organization-shared memory row in a
+  one-owner workspace is unrepresentable, and an organization that already has shared
+  memory cannot be converted into an individual workspace. The RLS insert policy
+  refuses it as well.
+- **The migration ledger is not readable by `alia_app`.**
+
+### How the RLS proof runs
+
+`tests/global-setup.ts` starts one PostgreSQL for the whole run, applies the
+migrations, and creates a test-only login role that is a member of `alia_app`. Set
+`ALIA_TEST_DATABASE_URL` to use an existing database instead (CI points it at the
+Postgres service container). The admin connection seeds fixtures and makes privileged
+assertions only; every request-path statement runs as `alia_app` with a
+transaction-local claim inside a transaction that is rolled back, so denied writes are
+proved to have changed nothing.
+
+`tests/integration/rls/schema-invariants.test.ts` also fails the suite if a future
+migration adds a tenant table without forced RLS, drops a policy, introduces a
+blanket-permissive policy, or hands `alia_app` a privileged attribute.
 
 ## Response invariants
 

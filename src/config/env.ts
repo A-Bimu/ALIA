@@ -23,6 +23,22 @@ export const PUBLIC_ENV_KEYS = ['NEXT_PUBLIC_ALIA_SERVICE_NAME'] as const;
 const nonEmptyString = z.string().trim().min(1);
 const positiveInt = z.coerce.number().int().positive();
 
+/** Postgres connection strings only: a mislabelled value must not be attempted. */
+const postgresConnectionString = z
+  .string()
+  .trim()
+  .refine((value) => /^postgres(ql)?:\/\/[^\s]+$/.test(value), {
+    message: 'must be a postgres:// connection string',
+  });
+
+/** Lowercase Postgres role name. Privilege checks happen in src/lib/db/pool.ts. */
+const postgresRoleName = z
+  .string()
+  .trim()
+  .refine((value) => /^[a-z_][a-z0-9_]{0,62}$/.test(value), {
+    message: 'must be a lowercase Postgres role name',
+  });
+
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   ALIA_ENV: z.enum(['local', 'test', 'staging', 'production']).default('local'),
@@ -33,6 +49,14 @@ export const envSchema = z.object({
   SUPABASE_URL: z.url().optional(),
   SUPABASE_ANON_KEY: nonEmptyString.optional(),
   SUPABASE_SERVICE_ROLE_KEY: nonEmptyString.optional(),
+
+  // Server-only. Verified token claims and the RLS-scoped database path (ALIA-002).
+  SUPABASE_JWT_SECRET: nonEmptyString.optional(),
+  SUPABASE_JWT_ISSUER: nonEmptyString.optional(),
+  SUPABASE_JWT_AUDIENCE: nonEmptyString.optional(),
+  DATABASE_URL: postgresConnectionString.optional(),
+  ALIA_DB_APP_ROLE: postgresRoleName.optional(),
+  ALIA_DB_STATEMENT_TIMEOUT_MS: positiveInt.optional(),
 
   MODEL_PROVIDER_BASE_URL: z.url().optional(),
   MODEL_PROVIDER_API_KEY: nonEmptyString.optional(),

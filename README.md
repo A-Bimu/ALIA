@@ -71,6 +71,9 @@ The worker starts immediately, then runs every 15 minutes while the Windows user
 
 ## Status
 
-Foundation implemented. ALIA-001 (foundation and executable contract) is complete on
-`hermes/ALIA-001-foundation-contract`; the next ready task is ALIA-002 (tenant identity, schema, and RLS
-proof). Setup and command reference: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Foundation and tenancy implemented. ALIA-001 (foundation and executable contract) and ALIA-002 (tenant
+identity, schema, and RLS proof) are complete on `hermes/ALIA-002-tenant-identity-rls`; the next ready task
+is ALIA-003 (learning-event and mastery loop). The alpha has eleven tenant tables with forced Row Level
+Security, trusted organization resolution from verified membership, and an automated cross-organization
+isolation proof against a real PostgreSQL. Setup, migration, and command reference:
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
