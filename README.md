@@ -19,6 +19,7 @@ This repository is being built toward a **seven-day founding-pilot alpha**, not 
 ## Non-negotiable boundaries
 
 - Every tenant-owned row has an organization_id and enforced PostgreSQL Row Level Security.
+- Tenant requests run as a restricted role over a dedicated least-privileged login; the migration/administrative credential is never used on a request path.
 - Organization memory is available only inside the same organization and only after approval.
 - Individual accounts receive private learner memory only. Their mistakes and solutions never become shared cross-user memory.
 - Tenant identity comes from verified authentication and membership, never from a client-supplied organization ID.
@@ -74,6 +75,8 @@ The worker starts immediately, then runs every 15 minutes while the Windows user
 Foundation and tenancy implemented. ALIA-001 (foundation and executable contract) and ALIA-002 (tenant
 identity, schema, and RLS proof) are complete on `hermes/ALIA-002-tenant-identity-rls`; the next ready task
 is ALIA-003 (learning-event and mastery loop). The alpha has eleven tenant tables with forced Row Level
-Security, trusted organization resolution from verified membership, and an automated cross-organization
-isolation proof against a real PostgreSQL. Setup, migration, and command reference:
+Security, a transaction-bound selected organization so dual membership cannot widen access, trusted
+organization resolution from verified membership, a dedicated least-privileged request login kept separate
+from the migration credential, and an automated cross-organization isolation proof against a real
+PostgreSQL. Setup, migration, and command reference:
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).

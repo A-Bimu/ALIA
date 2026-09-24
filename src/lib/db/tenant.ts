@@ -3,15 +3,22 @@
  *
  * Every normal request opens one transaction that:
  *   1. enters the restricted application role (`set local role`);
- *   2. publishes the verified subject claim as a transaction-local setting, the
- *      same shape Supabase uses, which is what the RLS policies read;
- *   3. refuses to continue if the session turns out to be a superuser or to hold
- *      BYPASSRLS, so a service-role or owner credential cannot silently serve a
- *      tenant request;
- *   4. scopes the statement and lock timeouts;
- *   5. is always closed: commit on success, rollback on any failure.
+ *   2. publishes the verified subject claim as a transaction-local setting, the same
+ *      shape Supabase uses, and the selected organization as `app.organization_id`,
+ *      which is what the RLS helpers read;
+ *   3. verifies the live session: it must be the restricted role, the login behind it
+ *      must not be a superuser, must not hold BYPASSRLS, must own no relation, and must
+ *      not be a member of a role that is privileged;
+ *   4. verifies that the claim and the selected organization really are the values
+ *      intended for this request;
+ *   5. scopes the statement and lock timeouts;
+ *   6. repeats 3 and 4 before committing, so a callback that left the restricted role
+ *      (for example with `RESET ROLE`) cannot commit anything;
+ *   7. is always closed: commit on success, rollback on any failure.
  *
- * Nothing here ever selects the service role or disables row level security.
+ * The request credential is the dedicated least-privileged login from
+ * `ALIA_DB_REQUEST_URL`, never the migration/administrative `DATABASE_URL`. Nothing
+ * here ever selects a service role or disables row level security.
  */
 
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
@@ -42,7 +49,12 @@ export interface TenantTransaction {
 
 export interface TenantTransactionScope {
   userId: string;
-  /** Resolved tenant for the request. RLS remains the authoritative boundary. */
+  /**
+   * Organization selected for this transaction, already resolved from membership.
+   * Absent only for the pre-selection step that discovers a principal's own
+   * memberships; every other tenant table denies without it. RLS remains the
+   * authoritative boundary.
+   */
   organizationId?: string;
 }
 
@@ -99,28 +111,76 @@ export function toTypedDbError(error: unknown): AliaError {
   return new AliaError('INTERNAL_ERROR', { cause: error });
 }
 
-async function assertUnprivilegedSession(client: PoolClient, config: DbConfig): Promise<void> {
-  const { rows } = await client.query<{
-    role_name: string;
-    is_superuser: string;
-    bypass_rls: boolean;
-  }>(
-    `select current_user as role_name,
-            current_setting('is_superuser') as is_superuser,
-            coalesce((select r.rolbypassrls from pg_roles r where r.rolname = current_user), false) as bypass_rls`,
-  );
+/**
+ * Everything the guard needs to prove the session is the restricted one over an
+ * unprivileged login, and that the settings the policies read are the ones intended.
+ *
+ * `coalesce(..., true)` on the role attributes fails closed: a role the catalogue
+ * cannot describe is treated as privileged.
+ */
+const SESSION_PROBE_SQL = `
+  select current_user as role_name,
+         session_user as session_role,
+         current_setting('is_superuser') as is_superuser,
+         app.current_user_id()::text as claim_user_id,
+         app.current_organization_id()::text as selected_organization_id,
+         coalesce((select r.rolbypassrls from pg_roles r where r.rolname = current_user), true)
+           as role_bypass_rls,
+         coalesce((select r.rolsuper from pg_roles r where r.rolname = session_user), true)
+           as session_superuser,
+         coalesce((select r.rolbypassrls from pg_roles r where r.rolname = session_user), true)
+           as session_bypass_rls,
+         (select count(*)::int
+            from pg_class c
+            join pg_roles r on r.oid = c.relowner
+           where r.rolname = session_user) as session_owned_relations,
+         (select count(*)::int
+            from pg_roles r
+           where (r.rolsuper or r.rolbypassrls)
+             and pg_has_role(session_user, r.oid, 'MEMBER')) as session_privileged_memberships
+`;
 
-  const row = rows[0];
+interface SessionProbe {
+  role_name: string;
+  session_role: string;
+  is_superuser: string;
+  claim_user_id: string | null;
+  selected_organization_id: string | null;
+  role_bypass_rls: boolean;
+  session_superuser: boolean;
+  session_bypass_rls: boolean;
+  session_owned_relations: number;
+  session_privileged_memberships: number;
+}
+
+/**
+ * Refuse to run (or to commit) unless the live session is exactly the scoped,
+ * unprivileged request session that row level security assumes.
+ */
+async function assertScopedUnprivilegedSession(
+  client: PoolClient,
+  config: DbConfig,
+  scope: TenantTransactionScope,
+): Promise<void> {
+  const { rows } = await client.query<SessionProbe>(SESSION_PROBE_SQL);
+  const facts = rows[0];
+
   const safe =
-    row !== undefined &&
-    row.role_name === config.appRole &&
-    row.is_superuser === 'off' &&
-    row.bypass_rls === false;
+    facts !== undefined &&
+    facts.role_name === config.appRole &&
+    facts.is_superuser === 'off' &&
+    facts.role_bypass_rls === false &&
+    facts.session_superuser === false &&
+    facts.session_bypass_rls === false &&
+    facts.session_owned_relations === 0 &&
+    facts.session_privileged_memberships === 0 &&
+    facts.claim_user_id === scope.userId &&
+    facts.selected_organization_id === (scope.organizationId ?? null);
 
   if (!safe) {
     throw new AliaError('CONFIGURATION_ERROR', {
       message:
-        'The tenant request path is not running as the restricted application role; refusing to continue.',
+        'The tenant request path is not running as the restricted application role over an unprivileged login; refusing to continue.',
     });
   }
 }
@@ -135,12 +195,12 @@ async function applyScope(
   await client.query(`set local lock_timeout = '${LOCK_TIMEOUT}'`);
   await client.query(`set local role "${config.appRole}"`);
   await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [scope.userId]);
-  if (scope.organizationId !== undefined) {
-    await client.query(`select set_config('app.organization_id', $1, true)`, [
-      scope.organizationId,
-    ]);
-  }
-  await assertUnprivilegedSession(client, config);
+  // Always written, including the empty string for the pre-selection step, so the
+  // request can never inherit a selected organization from another transaction.
+  await client.query(`select set_config('app.organization_id', $1, true)`, [
+    scope.organizationId ?? '',
+  ]);
+  await assertScopedUnprivilegedSession(client, config, scope);
 }
 
 function createTransaction(client: PoolClient): TenantTransaction {
@@ -167,6 +227,11 @@ export async function withPrincipalScope<T>(
       message: 'The authenticated principal identifier is not valid.',
     });
   }
+  if (scope.organizationId !== undefined && !UUID_PATTERN.test(scope.organizationId)) {
+    throw new AliaError('FORBIDDEN', {
+      message: 'The selected organization identifier is not valid.',
+    });
+  }
 
   const config = options.config ?? readDbConfig();
   const temporaryPool = options.pool === undefined && options.config !== undefined;
@@ -177,6 +242,9 @@ export async function withPrincipalScope<T>(
     await client.query('begin');
     await applyScope(client, config, scope);
     const result = await work(createTransaction(client));
+    // Re-checked before commit: a callback that left the restricted role, or that
+    // rewrote the settings the policies read, cannot commit its work.
+    await assertScopedUnprivilegedSession(client, config, scope);
     await client.query('commit');
     return result;
   } catch (error) {
@@ -193,7 +261,11 @@ export async function withPrincipalScope<T>(
   }
 }
 
-/** Run `work` inside one tenant transaction for a resolved principal. */
+/**
+ * Run `work` inside one tenant transaction for a resolved principal. The principal's
+ * organization is published as the selected organization, so every RLS helper is
+ * bound to it.
+ */
 export async function withTenant<T>(
   principal: TenantPrincipal,
   work: (tx: TenantTransaction) => Promise<T>,

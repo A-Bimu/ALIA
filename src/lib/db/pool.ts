@@ -1,13 +1,25 @@
 /**
  * Database configuration and connection pool for ALIA server code.
  *
+ * Two credentials, deliberately separate:
+ *
+ * - `DATABASE_URL` is the migration/administrative connection. It owns the schema and
+ *   is used by `npm run db:migrate` and by the test harness only. It is never handed
+ *   to a request path.
+ * - `ALIA_DB_REQUEST_URL` is the least-privileged login every normal tenant request
+ *   connects with. It must be able to enter the restricted application role
+ *   (`set local role alia_app`) and must not be a superuser, hold `BYPASSRLS`, own a
+ *   tenant table, or be a member of a role that does.
+ *
  * Rules enforced here (AGENTS.md, README "Non-negotiable boundaries"):
- * - the connection string is server-only and is never logged or returned;
- * - the tenant request path must enter the restricted application role, so a
- *   privileged role name (a service role, a database superuser) is refused as
- *   configuration before any query runs;
- * - a missing or malformed value fails closed with a typed configuration error
- *   that names the offending key and never echoes the value.
+ * - neither connection string is ever logged or returned;
+ * - the request connection refuses a privileged login name and refuses to reuse the
+ *   migration/administrative credential;
+ * - a missing or malformed value fails closed with a typed configuration error that
+ *   names the offending key and never echoes the value.
+ *
+ * The live session is verified again in `src/lib/db/tenant.ts` before and after the
+ * request work runs, because a URL alone cannot prove what the database granted.
  */
 
 import { Pool } from 'pg';
@@ -20,6 +32,12 @@ export const DEFAULT_DB_APP_ROLE = 'alia_app';
 export const DEFAULT_STATEMENT_TIMEOUT_MS = 5_000;
 
 export const MAX_POOL_SIZE = 5;
+
+/** Key holding the migration/administrative connection. Never a request credential. */
+export const ADMIN_DB_URL_KEY = 'DATABASE_URL';
+
+/** Key holding the dedicated least-privileged login used by tenant requests. */
+export const REQUEST_DB_URL_KEY = 'ALIA_DB_REQUEST_URL';
 
 const CONNECTION_TIMEOUT_MS = 5_000;
 const IDLE_TIMEOUT_MS = 10_000;
@@ -46,7 +64,7 @@ const ROLE_NAME_PATTERN = /^[a-z_][a-z0-9_]{0,62}$/;
 const POSTGRES_URL_PATTERN = /^postgres(ql)?:\/\/[^\s]+$/;
 
 export interface DbConfig {
-  /** Server-only connection string. Never log this value. */
+  /** Server-only request connection string. Never log this value. */
   url: string;
   appRole: string;
   statementTimeoutMs: number;
@@ -58,20 +76,41 @@ function configurationError(message: string): AliaError {
 
 type EnvSource = Record<string, string | undefined>;
 
+function trimmed(source: EnvSource, key: string): string | undefined {
+  const value = source[key]?.trim();
+  return value ? value : undefined;
+}
+
 /**
- * Read and validate the database configuration. Key names only in any error:
- * the connection string never appears in a message, a log, or a response.
+ * Login role named by a connection string, or null when it cannot be determined.
+ * Only the role name is inspected; the rest of the string is never reported.
+ */
+export function loginRoleOf(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const role = decodeURIComponent(parsed.username).trim();
+    return role.length > 0 ? role : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read and validate the request-path configuration. Key names only in any error: the
+ * connection string and the login role never appear in a message, a log, or a response.
  */
 export function readDbConfig(source: EnvSource = process.env): DbConfig {
-  const url = source.DATABASE_URL?.trim();
+  const url = trimmed(source, REQUEST_DB_URL_KEY);
   if (!url) {
-    throw configurationError('Missing server configuration: DATABASE_URL');
+    throw configurationError(`Missing server configuration: ${REQUEST_DB_URL_KEY}`);
   }
   if (!POSTGRES_URL_PATTERN.test(url)) {
-    throw configurationError('Invalid configuration: DATABASE_URL (must be a postgres:// connection string)');
+    throw configurationError(
+      `Invalid configuration: ${REQUEST_DB_URL_KEY} (must be a postgres:// connection string)`,
+    );
   }
 
-  const appRole = source.ALIA_DB_APP_ROLE?.trim() || DEFAULT_DB_APP_ROLE;
+  const appRole = trimmed(source, 'ALIA_DB_APP_ROLE') ?? DEFAULT_DB_APP_ROLE;
   if (!ROLE_NAME_PATTERN.test(appRole)) {
     throw configurationError('Invalid configuration: ALIA_DB_APP_ROLE (must be a lowercase role name)');
   }
@@ -81,9 +120,38 @@ export function readDbConfig(source: EnvSource = process.env): DbConfig {
     );
   }
 
-  const rawTimeout = source.ALIA_DB_STATEMENT_TIMEOUT_MS?.trim();
+  // The connection the request path uses must be a dedicated least-privileged login.
+  const loginRole = loginRoleOf(url);
+  if (loginRole === null) {
+    throw configurationError(
+      `Invalid configuration: ${REQUEST_DB_URL_KEY} (must name a dedicated login role)`,
+    );
+  }
+  if (PRIVILEGED_ROLE_NAMES.has(loginRole)) {
+    throw configurationError(
+      `Invalid configuration: ${REQUEST_DB_URL_KEY} (a privileged or administrative login may not serve tenant requests)`,
+    );
+  }
+  if (loginRole === appRole) {
+    throw configurationError(
+      `Invalid configuration: ${REQUEST_DB_URL_KEY} (the application role is NOLOGIN; connect with a dedicated login instead)`,
+    );
+  }
+
+  // The request credential must not be the migration/administrative credential.
+  const adminUrl = trimmed(source, ADMIN_DB_URL_KEY);
+  if (adminUrl !== undefined) {
+    const adminLoginRole = loginRoleOf(adminUrl);
+    if (adminUrl === url || (adminLoginRole !== null && adminLoginRole === loginRole)) {
+      throw configurationError(
+        `Invalid configuration: ${REQUEST_DB_URL_KEY} (must not be the migration or administrative connection)`,
+      );
+    }
+  }
+
+  const rawTimeout = trimmed(source, 'ALIA_DB_STATEMENT_TIMEOUT_MS');
   let statementTimeoutMs = DEFAULT_STATEMENT_TIMEOUT_MS;
-  if (rawTimeout) {
+  if (rawTimeout !== undefined) {
     const parsed = Number(rawTimeout);
     if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 120_000) {
       throw configurationError(
@@ -94,6 +162,23 @@ export function readDbConfig(source: EnvSource = process.env): DbConfig {
   }
 
   return { url, appRole, statementTimeoutMs };
+}
+
+/**
+ * Read the migration/administrative connection. Only `npm run db:migrate` and the
+ * test harness may use it; no request path accepts this value.
+ */
+export function readAdminDbConfig(source: EnvSource = process.env): { url: string } {
+  const url = trimmed(source, ADMIN_DB_URL_KEY);
+  if (!url) {
+    throw configurationError(`Missing server configuration: ${ADMIN_DB_URL_KEY}`);
+  }
+  if (!POSTGRES_URL_PATTERN.test(url)) {
+    throw configurationError(
+      `Invalid configuration: ${ADMIN_DB_URL_KEY} (must be a postgres:// connection string)`,
+    );
+  }
+  return { url };
 }
 
 export function createPool(config: DbConfig): Pool {

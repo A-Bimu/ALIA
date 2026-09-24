@@ -54,7 +54,11 @@ export const envSchema = z.object({
   SUPABASE_JWT_SECRET: nonEmptyString.optional(),
   SUPABASE_JWT_ISSUER: nonEmptyString.optional(),
   SUPABASE_JWT_AUDIENCE: nonEmptyString.optional(),
+  // Migration/administrative connection. Used by `npm run db:migrate` and by the test
+  // harness only; never handed to a request path.
   DATABASE_URL: postgresConnectionString.optional(),
+  // Dedicated least-privileged login every normal tenant request connects with.
+  ALIA_DB_REQUEST_URL: postgresConnectionString.optional(),
   ALIA_DB_APP_ROLE: postgresRoleName.optional(),
   ALIA_DB_STATEMENT_TIMEOUT_MS: positiveInt.optional(),
 

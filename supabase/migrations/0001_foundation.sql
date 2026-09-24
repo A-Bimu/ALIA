@@ -5,6 +5,9 @@
 --   * every tenant-owned table enables *and forces* row level security;
 --   * no table starts with a permissive policy: access must be granted explicitly;
 --   * the request identity comes from a verified claim, never from a request body;
+--   * the *selected* organization is a transaction-local value derived from an active
+--     membership row, and every tenant access helper requires its target to match it,
+--     so membership in two organizations never widens access inside one of them;
 --   * the application runs as `alia_app`, a role with no superuser, no BYPASSRLS,
 --     and no ownership of any tenant table.
 --
@@ -118,9 +121,40 @@ $$;
 comment on function app.current_user_id() is
   'Authenticated principal id, or null. Fail-closed input for every tenant policy.';
 
+-- The validated transaction-local *selected* organization for this request.
+--
+-- A request transaction publishes it with
+-- `set_config('app.organization_id', <uuid resolved from membership>, true)` after the
+-- organization has been derived from an active membership row. Every tenant access
+-- helper below requires its target to equal this value, so a principal that belongs to
+-- organizations A and B cannot read or write B inside a transaction scoped to A (or the
+-- other way round). Unset, empty, and malformed values all yield null, which no policy
+-- can satisfy: the path fails closed.
+create or replace function app.current_organization_id()
+returns uuid
+language sql
+stable
+set search_path = ''
+as $$
+  select case
+    when coalesce(current_setting('app.organization_id', true), '')
+           ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      then current_setting('app.organization_id', true)::uuid
+    else null
+  end
+$$;
+
+comment on function app.current_organization_id() is
+  'Organization selected for the current transaction, or null. Every tenant helper additionally requires its target to match it.';
+
 -- ---------------------------------------------------------------------------
 -- Membership helpers (security definer: these read memberships from inside
 -- memberships policies, which cannot use RLS itself without recursing).
+--
+-- Each helper answers yes only for the *selected* organization: the target must match
+-- app.current_organization_id(). Resolving which organizations a principal belongs to
+-- is therefore a separate, earlier step that reads public.memberships directly under
+-- the own-row select policy, never through these helpers.
 -- ---------------------------------------------------------------------------
 
 create or replace function app.is_active_member(target_organization_id uuid)
@@ -134,13 +168,14 @@ as $$
     select 1
     from public.memberships m
     where m.organization_id = target_organization_id
+      and target_organization_id = app.current_organization_id()
       and m.user_id = app.current_user_id()
       and m.status = 'active'
   )
 $$;
 
 comment on function app.is_active_member(uuid) is
-  'True only when the current principal holds an active membership in that organization.';
+  'True only when the current principal holds an active membership in the selected organization.';
 
 -- Workspace access combines the two access rules required by the specification:
 -- inside an organization, the membership role must be in the allowed set; inside a
@@ -157,6 +192,7 @@ as $$
     from public.memberships m
     join public.organizations o on o.id = m.organization_id
     where m.organization_id = target_organization_id
+      and target_organization_id = app.current_organization_id()
       and m.user_id = app.current_user_id()
       and m.status = 'active'
       and (
@@ -167,7 +203,7 @@ as $$
 $$;
 
 comment on function app.has_workspace_access(uuid, text[]) is
-  'Active role access inside an organization, or owner-only access inside an individual workspace.';
+  'Active role access inside the selected organization, or owner-only access inside a selected individual workspace.';
 
 -- Administration of an organization: rosters, budgets, and organization memory
 -- approval. Deliberately false for individual workspaces, so a one-owner workspace
@@ -184,6 +220,7 @@ as $$
     from public.memberships m
     join public.organizations o on o.id = m.organization_id
     where m.organization_id = target_organization_id
+      and target_organization_id = app.current_organization_id()
       and m.user_id = app.current_user_id()
       and m.status = 'active'
       and o.account_type = 'organization'
@@ -192,7 +229,7 @@ as $$
 $$;
 
 comment on function app.is_organization_admin(uuid) is
-  'True only for an active owner or admin of a multi-member organization.';
+  'True only for an active owner or admin of the selected multi-member organization.';
 
 -- True only for an active member of a one-owner individual workspace. Lets the RLS
 -- layer itself refuse organization-shared memory in such a workspace, in addition to
@@ -209,6 +246,7 @@ as $$
     from public.organizations o
     join public.memberships m on m.organization_id = o.id
     where o.id = target_organization_id
+      and target_organization_id = app.current_organization_id()
       and o.account_type = 'individual'
       and m.user_id = app.current_user_id()
       and m.status = 'active'
@@ -216,10 +254,11 @@ as $$
 $$;
 
 comment on function app.is_individual_workspace(uuid) is
-  'True only for an active member of a one-owner individual workspace.';
+  'True only for an active member of the selected one-owner individual workspace.';
 
 revoke all on function app.claim_sub() from public;
 revoke all on function app.current_user_id() from public;
+revoke all on function app.current_organization_id() from public;
 revoke all on function app.is_active_member(uuid) from public;
 revoke all on function app.has_workspace_access(uuid, text[]) from public;
 revoke all on function app.is_organization_admin(uuid) from public;
@@ -228,6 +267,7 @@ revoke all on function app.is_individual_workspace(uuid) from public;
 grant usage on schema app to alia_app;
 grant execute on function app.claim_sub() to alia_app;
 grant execute on function app.current_user_id() to alia_app;
+grant execute on function app.current_organization_id() to alia_app;
 grant execute on function app.is_active_member(uuid) to alia_app;
 grant execute on function app.has_workspace_access(uuid, text[]) to alia_app;
 grant execute on function app.is_organization_admin(uuid) to alia_app;
@@ -275,13 +315,22 @@ create policy organizations_select_own_membership
 alter table public.memberships enable row level security;
 alter table public.memberships force row level security;
 
--- A principal may always read its own memberships (including a suspended one, so a
--- suspension is observable); a roster is readable only by an organization admin.
+-- A principal may always read its own memberships, including a suspended one, so a
+-- suspension is observable and the pre-selection discovery step works. Inside a
+-- transaction that has already selected an organization, even the principal's own
+-- rows are limited to that organization; a roster is readable only by an
+-- administrator of the selected organization.
 create policy memberships_select_own_or_admin
   on public.memberships
   for select
   using (
-    user_id = app.current_user_id()
+    (
+      user_id = app.current_user_id()
+      and (
+        app.current_organization_id() is null
+        or organization_id = app.current_organization_id()
+      )
+    )
     or app.is_organization_admin(organization_id)
   );
 

@@ -208,14 +208,15 @@ describe('tenant schema invariants', () => {
     );
 
     expect(rows.map((row) => row.proname).sort()).toEqual([
-      'claim_sub',
-      'current_user_id',
-      'has_workspace_access',
-      'is_active_member',
-      'is_individual_workspace',
-      'is_organization_admin',
-      'touch_updated_at',
-    ]);
+          'claim_sub',
+          'current_organization_id',
+          'current_user_id',
+          'has_workspace_access',
+          'is_active_member',
+          'is_individual_workspace',
+          'is_organization_admin',
+          'touch_updated_at',
+        ]);
 
     for (const helper of rows) {
       expect(helper.public_execute, `${helper.proname} must not be executable by PUBLIC`).toBe(false);
@@ -260,6 +261,55 @@ describe('tenant schema invariants', () => {
           row.definition.includes('learners(organization_id, id)'),
       );
       expect(guard, `${table} must reference learners(organization_id, id)`).toBeDefined();
-    }
-  });
-});
+          }
+        });
+
+        it('binds every tenant access helper to the transaction-local selected organization', async () => {
+          const { rows } = await admin.query<{ proname: string; prosrc: string }>(
+            `select p.proname, p.prosrc
+               from pg_proc p
+               join pg_namespace n on n.oid = p.pronamespace
+              where n.nspname = 'app'
+              order by p.proname`,
+          );
+
+          // The claim readers are the only helpers that do not need an organization; the
+          // workspace helpers cannot answer without one, and the trigger helper reads no
+          // tenant table at all.
+          const organizationBoundHelpers = [
+            'has_workspace_access',
+            'is_active_member',
+            'is_individual_workspace',
+            'is_organization_admin',
+          ];
+          for (const helper of organizationBoundHelpers) {
+            const row = rows.find((candidate) => candidate.proname === helper);
+            expect(row, `${helper} must exist`).toBeDefined();
+            expect(
+              row?.prosrc,
+              `${helper} must require the selected organization, not any membership of the principal`,
+            ).toContain('app.current_organization_id()');
+          }
+
+          // The selected organization itself must fail closed on missing or malformed input.
+          const selected = rows.find((candidate) => candidate.proname === 'current_organization_id');
+          expect(selected?.prosrc).toContain('current_setting(\'app.organization_id\', true)');
+          expect(selected?.prosrc).toContain('else null');
+
+          // Membership discovery stays possible, but the own-row policy limits it: inside a
+          // selected organization even the principal's own rows are limited to that
+          // organization.
+          const { rows: policies } = await admin.query<{ polname: string; using_expr: string | null }>(
+            `select p.polname, pg_get_expr(p.polqual, p.polrelid) as using_expr
+               from pg_policy p
+               join pg_class c on c.oid = p.polrelid
+              where c.relname = 'memberships'
+              order by p.polname`,
+          );
+
+          const ownRowPolicy = policies.find((row) => row.polname === 'memberships_select_own_or_admin');
+          expect(ownRowPolicy, 'memberships must keep an own-row select policy').toBeDefined();
+          expect(ownRowPolicy?.using_expr).toContain('current_user_id');
+          expect(ownRowPolicy?.using_expr).toContain('current_organization_id');
+        });
+      });

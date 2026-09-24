@@ -3,8 +3,11 @@
  *
  *   DATABASE_URL=postgres://... npm run db:migrate
  *
- * Runs as the migration/owner role from DATABASE_URL, which must be privileged
- * enough to create roles and tables. It never prints the connection string.
+ * Runs as the migration/administrative role from DATABASE_URL, which must be privileged
+ * enough to create roles and tables. This is the only place that credential is used,
+ * besides the test harness; normal tenant requests connect with the separate
+ * least-privileged `ALIA_DB_REQUEST_URL` login (see src/lib/db/pool.ts). It never prints
+ * the connection string.
  *
  * Console output is intentional here: this is an operator tool, not a request
  * path (see the eslint override for scripts/).

@@ -20,6 +20,12 @@ export const EDUCATOR_A = 'aaaaaaaa-0000-0000-0000-000000000002';
 export const VIEWER_A = 'aaaaaaaa-0000-0000-0000-000000000003';
 export const OWNER_B = 'bbbbbbbb-0000-0000-0000-000000000001';
 export const EDUCATOR_B = 'bbbbbbbb-0000-0000-0000-000000000002';
+/**
+ * Belongs to organization A (owner) *and* organization B (admin). Exists so the
+ * selected-organization binding can be proved: membership in two organizations must
+ * not widen access inside either one.
+ */
+export const DUAL_MEMBER = 'aaaaaaaa-0000-0000-0000-000000000009';
 export const OWNER_INDIVIDUAL = 'cccccccc-0000-0000-0000-000000000001';
 /** Authenticated but a member of nothing. */
 export const OUTSIDER = 'dddddddd-0000-0000-0000-000000000001';
@@ -35,6 +41,7 @@ export const MEMBERSHIP_USERS = [
   VIEWER_A,
   OWNER_B,
   EDUCATOR_B,
+  DUAL_MEMBER,
   OWNER_INDIVIDUAL,
 ] as const;
 
@@ -52,10 +59,23 @@ export async function seedFixtures(admin: Client): Promise<void> {
        ($1, $4, 'owner', 'active'),
        ($1, $5, 'educator', 'active'),
        ($1, $6, 'viewer', 'active'),
+       ($1, $9, 'owner', 'active'),
        ($2, $7, 'owner', 'active'),
        ($2, $8, 'educator', 'active'),
-       ($3, $9, 'owner', 'active')`,
-    [ORG_A, ORG_B, ORG_INDIVIDUAL, OWNER_A, EDUCATOR_A, VIEWER_A, OWNER_B, EDUCATOR_B, OWNER_INDIVIDUAL],
+       ($2, $9, 'admin', 'active'),
+       ($3, $10, 'owner', 'active')`,
+    [
+      ORG_A,
+      ORG_B,
+      ORG_INDIVIDUAL,
+      OWNER_A,
+      EDUCATOR_A,
+      VIEWER_A,
+      OWNER_B,
+      EDUCATOR_B,
+      DUAL_MEMBER,
+      OWNER_INDIVIDUAL,
+    ],
   );
 
   await admin.query(

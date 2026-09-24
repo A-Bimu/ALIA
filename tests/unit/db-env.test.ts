@@ -3,6 +3,10 @@
  *
  * The database and token-verification keys are server-only. A malformed value must
  * be reported by key name, and none of these values may ever reach a browser slice.
+ *
+ * Two database keys exist on purpose: `DATABASE_URL` is the migration/administrative
+ * connection and `ALIA_DB_REQUEST_URL` is the dedicated least-privileged login a
+ * normal tenant request uses. Neither may appear in a browser slice.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -10,27 +14,31 @@ import { describe, expect, it } from 'vitest';
 import { ENV_SOURCE_KIND, getPublicEnv, inspectEnv, loadEnv, PUBLIC_ENV_KEYS } from '@/config/env';
 import { AliaError } from '@/lib/errors';
 
-const DB_URL = 'postgres://alia_user:sup3r-s3cret-pw@db.example.test:5432/postgres';
+const ADMIN_URL = 'postgres://alia_owner:pw@db.example.test:5432/postgres';
+const REQUEST_URL = 'postgres://alia_request:pw@db.example.test:5432/postgres';
 const JWT_SECRET = 'test-only-jwt-secret-value-0123456789';
 
 describe('database and auth configuration', () => {
-  it('accepts a postgres connection string, a role name, and a timeout', () => {
+  it('accepts a request connection string, an admin connection string, a role name, and a timeout', () => {
     const env = loadEnv({
-      DATABASE_URL: DB_URL,
+      DATABASE_URL: ADMIN_URL,
+      ALIA_DB_REQUEST_URL: REQUEST_URL,
       ALIA_DB_APP_ROLE: 'alia_app',
       ALIA_DB_STATEMENT_TIMEOUT_MS: '2500',
       SUPABASE_JWT_SECRET: JWT_SECRET,
       SUPABASE_JWT_AUDIENCE: 'authenticated',
     });
 
-    expect(env.DATABASE_URL).toBe(DB_URL);
+    expect(env.DATABASE_URL).toBe(ADMIN_URL);
+    expect(env.ALIA_DB_REQUEST_URL).toBe(REQUEST_URL);
     expect(env.ALIA_DB_APP_ROLE).toBe('alia_app');
     expect(env.ALIA_DB_STATEMENT_TIMEOUT_MS).toBe(2_500);
   });
 
   it('reports a malformed database URL or role by key name only', () => {
     const inspection = inspectEnv({
-      DATABASE_URL: 'mysql://user:pw@host:3306/db',
+      DATABASE_URL: 'mysql://owner:pw@host:3306/db',
+      ALIA_DB_REQUEST_URL: 'not-a-url',
       ALIA_DB_APP_ROLE: 'Alia App',
       ALIA_DB_STATEMENT_TIMEOUT_MS: '-5',
     });
@@ -39,6 +47,7 @@ describe('database and auth configuration', () => {
     expect(inspection.environment).toBe('unknown');
     expect(inspection.issues.map((issue) => issue.key).sort()).toEqual([
       'ALIA_DB_APP_ROLE',
+      'ALIA_DB_REQUEST_URL',
       'ALIA_DB_STATEMENT_TIMEOUT_MS',
       'DATABASE_URL',
     ]);
@@ -47,6 +56,7 @@ describe('database and auth configuration', () => {
     expect(serialized).not.toContain('mysql://');
     expect(serialized).not.toContain('pw@host');
     expect(serialized).not.toContain('Alia App');
+    expect(serialized).not.toContain('not-a-url');
   });
 
   it('keeps the connection string out of a thrown configuration error', () => {
@@ -63,13 +73,15 @@ describe('database and auth configuration', () => {
 
   it('never exposes a server-only key in the browser slice', () => {
     const publicEnv = getPublicEnv({
-      DATABASE_URL: DB_URL,
+      DATABASE_URL: ADMIN_URL,
+      ALIA_DB_REQUEST_URL: REQUEST_URL,
       SUPABASE_JWT_SECRET: JWT_SECRET,
       NEXT_PUBLIC_ALIA_SERVICE_NAME: 'ALIA',
     });
 
     expect(Object.keys(publicEnv)).toEqual(['serviceName']);
-    expect(JSON.stringify(publicEnv)).not.toContain(DB_URL);
+    expect(JSON.stringify(publicEnv)).not.toContain(ADMIN_URL);
+    expect(JSON.stringify(publicEnv)).not.toContain(REQUEST_URL);
     expect(JSON.stringify(publicEnv)).not.toContain(JWT_SECRET);
 
     for (const key of PUBLIC_ENV_KEYS) {

@@ -11,9 +11,12 @@
  *   devDependency. No Docker, no administrator rights, no paid infrastructure.
  *
  * The database is created fresh for a run: migrations are applied from
- * supabase/migrations, and the admin connection used here is the migration role.
- * Request paths never use it; they run as `alia_app` through a scoped login role
- * that the harness creates only for tests.
+ * supabase/migrations, and the admin connection used here is the migration role
+ * (`DATABASE_URL` in a real deployment). Request paths never use it; they run as
+ * `alia_app` through a scoped login role that the harness creates only for tests, and
+ * that login is deliberately unprivileged (no superuser, no BYPASSRLS, owns no table,
+ * member of no privileged role) so the application-path guards can be exercised
+ * against the same shape a deployment uses.
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -23,7 +26,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import EmbeddedPostgres from 'embedded-postgres';
-import { Client, Pool } from 'pg';
+import { Client, Pool, type PoolClient } from 'pg';
 
 import { runMigrations } from '@/lib/db/migrations';
 
@@ -160,24 +163,70 @@ export interface Denial {
   message: string;
 }
 
+export interface PrincipalScope {
+  userId: string;
+  /**
+   * Organization selected for the transaction. Omitted only for the pre-selection
+   * step that discovers a principal's own memberships.
+   */
+  organizationId?: string;
+}
+
 /**
  * Run SQL exactly as the application path does: inside one transaction, as the
- * restricted role, with the verified claim. Always rolled back, so an isolation
- * test leaves nothing behind.
+ * restricted role, with the verified claim and the selected organization. Always
+ * rolled back, so an isolation test leaves nothing behind.
  */
 export async function runAsPrincipal(
   pool: Pool,
   userId: string,
   sql: string,
   values: unknown[] = [],
+  organizationId?: string,
 ): Promise<{ rows: Record<string, unknown>[]; rowCount: number }> {
   const client = await pool.connect();
   try {
     await client.query('begin');
-    await client.query(`set local role ${APP_ROLE}`);
-    await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [userId]);
+    await applyTestScope(client, { userId, organizationId });
     const result = await client.query(sql, values);
     return { rows: result.rows as Record<string, unknown>[], rowCount: result.rowCount ?? 0 };
+  } finally {
+    await client.query('rollback').catch(() => undefined);
+    client.release();
+  }
+}
+
+/**
+ * Enter the request session inside an already-open transaction: the restricted role,
+ * the verified claim, and the selected organization, in the same order and with the
+ * same settings the application uses.
+ */
+export async function applyTestScope(
+  client: PoolClient,
+  scope: PrincipalScope,
+): Promise<void> {
+  await client.query(`set local role ${APP_ROLE}`);
+  await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [scope.userId]);
+  await client.query(`select set_config('app.organization_id', $1, true)`, [
+    scope.organizationId ?? '',
+  ]);
+}
+
+/**
+ * Run a callback inside one request transaction and roll everything back. Gives a
+ * test the raw client, so it can prove what happens when the callback leaves the
+ * restricted role (`reset role`) or rewrites the settings the policies read.
+ */
+export async function withAppSession<T>(
+  pool: Pool,
+  scope: PrincipalScope,
+  run: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await applyTestScope(client, scope);
+    return await run(client);
   } finally {
     await client.query('rollback').catch(() => undefined);
     client.release();
@@ -190,12 +239,12 @@ export async function runAsPrincipalCommitted(
   userId: string,
   sql: string,
   values: unknown[] = [],
+  organizationId?: string,
 ): Promise<{ rows: Record<string, unknown>[]; rowCount: number }> {
   const client = await pool.connect();
   try {
     await client.query('begin');
-    await client.query(`set local role ${APP_ROLE}`);
-    await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [userId]);
+    await applyTestScope(client, { userId, organizationId });
     const result = await client.query(sql, values);
     await client.query('commit');
     return { rows: result.rows as Record<string, unknown>[], rowCount: result.rowCount ?? 0 };
