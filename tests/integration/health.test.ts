@@ -3,10 +3,12 @@ import { z } from 'zod';
 
 import { GET, dynamic, runtime } from '@/app/api/v1/health/route';
 import { SECRET_KEY_PATTERN } from '@/config/env';
+import { PROTECTED_RESPONSE_HEADERS } from '@/lib/http';
 import { TRACE_HEADER } from '@/lib/trace';
 
 const FAKE_SERVICE_ROLE = 'fake-service-role-key-do-not-log-0123456789';
 const FAKE_PROVIDER_KEY = 'fake-provider-key-do-not-log-9876543210';
+const HOSTILE_ENV_VALUE = 'postgres://user:fake-password-value@host:5432/db';
 
 const healthSchema = z.object({
   status: z.enum(['ok', 'degraded']),
@@ -78,6 +80,15 @@ describe('GET /api/v1/health', () => {
     expect(body.trace_id).toMatch(/^alia_/);
   });
 
+  it('never sets a protected header more than once', async () => {
+    const { response } = await callHealth({ [TRACE_HEADER]: 'partner-trace-0002' });
+    const names = [...response.headers.keys()].map((name) => name.toLowerCase());
+
+    for (const protectedName of PROTECTED_RESPONSE_HEADERS) {
+      expect(names.filter((name) => name === protectedName.toLowerCase())).toHaveLength(1);
+    }
+  });
+
   it('never exposes credentials or a secret-shaped key even when configured', async () => {
     vi.stubEnv('SUPABASE_URL', 'https://example.supabase.co');
     vi.stubEnv('SUPABASE_ANON_KEY', 'fake-anon');
@@ -92,6 +103,22 @@ describe('GET /api/v1/health', () => {
     expect(serialized).not.toContain(FAKE_PROVIDER_KEY);
     expect(serialized).not.toContain('example.supabase.co');
     expect(Object.keys(body).every((key) => !SECRET_KEY_PATTERN.test(key))).toBe(true);
+  });
+
+  it('never echoes an invalid environment value in the body or the headers', async () => {
+    vi.stubEnv('ALIA_ENV', HOSTILE_ENV_VALUE);
+
+    const { response, body } = await callHealth();
+    const serialized = `${JSON.stringify(body)}${JSON.stringify([...response.headers])}`;
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe('degraded');
+    expect(body.checks.config).toBe('incomplete');
+    expect(body.environment).toBe('unknown');
+    expect(body.pending_configuration).toEqual(['ALIA_ENV']);
+    expect(healthSchema.safeParse(body).success).toBe(true);
+    expect(serialized).not.toContain(HOSTILE_ENV_VALUE);
+    expect(serialized).not.toContain('fake-password-value');
   });
 
   it('reports incomplete configuration by key name only', async () => {

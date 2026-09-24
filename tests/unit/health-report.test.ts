@@ -41,4 +41,30 @@ describe('health report builder', () => {
     expect(report.version).toBe('0.1.0');
     expect(JSON.stringify(report)).not.toContain('supabase');
   });
+
+  it('never echoes an invalid environment value', () => {
+    const hostile = 'postgres://user:fake-password-value@host:5432/db';
+    const report = buildHealthReport({
+      traceId: 'alia_trace_0005',
+      env: { ALIA_ENV: hostile },
+    });
+
+    expect(report.status).toBe('degraded');
+    expect(report.checks.config).toBe('incomplete');
+    expect(report.environment).toBe('unknown');
+    expect(report.pending_configuration).toEqual(['ALIA_ENV']);
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toContain(hostile);
+    expect(serialized).not.toContain('fake-password-value');
+  });
+
+  it('uses the fixed label when any other configuration value is invalid', () => {
+    const report = buildHealthReport({
+      traceId: 'alia_trace_0006',
+      env: { ALIA_ENV: 'staging', SUPABASE_URL: 'not-a-url' },
+    });
+
+    expect(report.status).toBe('degraded');
+    expect(report.environment).toBe('unknown');
+  });
 });

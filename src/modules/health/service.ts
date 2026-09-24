@@ -7,6 +7,7 @@ export interface HealthReport {
   status: 'ok' | 'degraded';
   service: typeof SERVICE_NAME;
   api_version: typeof API_VERSION;
+  /** Validated environment label only. Never a raw, unvalidated value. */
   environment: string;
   version: string;
   uptime_seconds: number;
@@ -31,6 +32,11 @@ export interface HealthReportOptions {
  * Build the health payload. It contains no secret, credential, connection
  * string, or tenant row: only service identity, timing, and the names of
  * configuration keys that are currently unset.
+ *
+ * The public `environment` field comes from `inspectEnv`, which returns the value
+ * only when the whole configuration schema validates. An invalid or hostile value
+ * (for example a connection string pasted into `ALIA_ENV`) therefore never
+ * reaches this payload: the fixed `unknown` label is reported instead.
  */
 export function buildHealthReport(options: HealthReportOptions): HealthReport {
   const source = options.env ?? process.env;
@@ -41,7 +47,7 @@ export function buildHealthReport(options: HealthReportOptions): HealthReport {
     status: inspection.ok ? 'ok' : 'degraded',
     service: SERVICE_NAME,
     api_version: API_VERSION,
-    environment: source.ALIA_ENV?.trim() || 'local',
+    environment: inspection.environment,
     version: SERVICE_VERSION,
     uptime_seconds: Math.max(0, Math.floor(options.uptimeSeconds ?? process.uptime())),
     timestamp: (options.now ?? new Date()).toISOString(),

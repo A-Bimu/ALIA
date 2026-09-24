@@ -64,9 +64,25 @@ Configuration is validated by `src/config/env.ts`. Rules:
 - Supabase and provider credentials are server-only. A browser must never receive
   a service-role key, a provider secret, or an unrestricted database credential.
 
-Missing Supabase configuration is expected until the identity task lands; the
-health endpoint reports it as `checks.config = "incomplete"` and lists the key
-names in `pending_configuration`.
+Missing Supabase and provider configuration is expected until the identity task
+lands and does not by itself degrade the service: those keys are optional and are
+validated only when present. A bare `.env` therefore reports
+`checks.config = "ok"` with an empty `pending_configuration`, and
+`/api/v1/health` still answers `200`.
+
+`checks.config` becomes `"incomplete"` with `status = "degraded"` and
+`pending_configuration` lists the offending key names (never their values) only
+when a supplied value fails validation, for example an unknown `ALIA_ENV` or a
+malformed `SUPABASE_URL`. The public `environment` field is taken from the
+validated schema only; when validation fails it reports the fixed label
+`unknown`, so an invalid value is never echoed into a response.
+
+## Response invariants
+
+`src/lib/http.ts` owns the single JSON response shape. `content-type`,
+`cache-control: no-store`, `x-content-type-options: nosniff`, and `x-trace-id`
+are protected: they are applied after any caller-supplied headers, so a caller
+can neither replace nor duplicate them, including with a differently-cased name.
 
 ## Traces and errors
 

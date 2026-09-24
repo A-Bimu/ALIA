@@ -55,7 +55,18 @@ export interface EnvIssue {
 export interface EnvInspection {
   ok: boolean;
   issues: EnvIssue[];
+  /**
+   * Public environment label. Derived from the validated schema only, so a value
+   * that fails validation is never echoed; the fixed sentinel is used instead.
+   */
+  environment: string;
 }
+
+/**
+ * Fixed label used whenever the environment value cannot be trusted. A raw,
+ * unvalidated value must never reach a public payload.
+ */
+export const UNKNOWN_ENVIRONMENT_LABEL = 'unknown';
 
 type EnvSource = Record<string, string | undefined>;
 
@@ -93,8 +104,14 @@ function issuesFrom(error: z.ZodError, source: EnvSource): EnvIssue[] {
 export function inspectEnv(source: EnvSource = process.env): EnvInspection {
   const normalized = normalizeSource(source);
   const result = envSchema.safeParse(normalized);
-  if (result.success) return { ok: true, issues: [] };
-  return { ok: false, issues: issuesFrom(result.error, normalized) };
+  if (result.success) {
+    return { ok: true, issues: [], environment: result.data.ALIA_ENV };
+  }
+  return {
+    ok: false,
+    issues: issuesFrom(result.error, normalized),
+    environment: UNKNOWN_ENVIRONMENT_LABEL,
+  };
 }
 
 /** Validated configuration. Throws a typed configuration error when invalid. */

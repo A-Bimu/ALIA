@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PUBLIC_ENV_KEYS,
   SECRET_KEY_PATTERN,
+  UNKNOWN_ENVIRONMENT_LABEL,
   getPublicEnv,
   inspectEnv,
   loadEnv,
@@ -78,8 +79,29 @@ describe('typed environment contract', () => {
     expect(serialized).not.toContain('verbose');
   });
 
+  it('exposes the environment label only from a validated value', () => {
+    expect(inspectEnv({}).environment).toBe('local');
+    expect(inspectEnv({ ALIA_ENV: 'staging' }).environment).toBe('staging');
+
+    const hostile = 'postgres://user:fake-password-value@host:5432/db';
+    const invalid = inspectEnv({ ALIA_ENV: hostile });
+    expect(invalid.ok).toBe(false);
+    expect(invalid.environment).toBe(UNKNOWN_ENVIRONMENT_LABEL);
+    expect(JSON.stringify(invalid)).not.toContain(hostile);
+    expect(JSON.stringify(invalid)).not.toContain('fake-password-value');
+
+    expect(inspectEnv({ ALIA_ENV: 'staging', MODEL_MAX_OUTPUT_TOKENS: '0' }).environment).toBe(
+      UNKNOWN_ENVIRONMENT_LABEL,
+    );
+  });
+
   it('requires Supabase configuration for server data paths', () => {
-    expect(requireSupabaseServerConfig({ SUPABASE_URL: 'https://example.supabase.co', SUPABASE_ANON_KEY: 'anon' })).toEqual({
+    expect(
+      requireSupabaseServerConfig({
+        SUPABASE_URL: 'https://example.supabase.co',
+        SUPABASE_ANON_KEY: 'anon',
+      }),
+    ).toEqual({
       url: 'https://example.supabase.co',
       anonKey: 'anon',
     });
