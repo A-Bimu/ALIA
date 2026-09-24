@@ -51,11 +51,13 @@ Commands run in the repository root on Node 24.14.1 / npm 11.11.0:
 
 Suites added for this task:
 
-- `tests/integration/rls/isolation.test.ts`: two organizations, a one-owner individual workspace, and a
+- `tests/integration/rls/isolation.test.ts` (24 tests): two organizations, a one-owner individual workspace, and a
   principal with no membership. Every request-path statement runs as the restricted `alia_app` role with a
   transaction-local claim, inside a transaction that is rolled back; denied writes are additionally counted
   on the privileged connection, so "no rows changed" is proved rather than assumed.
-- `tests/integration/rls/schema-invariants.test.ts`: the machine-checked form of the AGENTS.md invariants.
+- `tests/integration/rls/schema-invariants.test.ts` (11 tests): the machine-checked form of the AGENTS.md
+  invariants — forced RLS, explicit policy presence, no blanket-permissive policy, append-only tables, role
+  attributes, helper search_path and grants, and the tenant-consistency foreign keys.
 - `tests/integration/identity/principal.test.ts`: token verification, membership resolution, the tenant
   transaction, and typed error mapping through the real request path.
 - `tests/integration/db/migrations.test.ts`: clean-database application, idempotency, checksum drift,
