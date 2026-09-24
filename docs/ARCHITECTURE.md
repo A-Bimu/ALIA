@@ -56,6 +56,25 @@ The organizations table is the isolation root. The account_type field distinguis
 
 All tenant foreign keys include organization_id. Policies use active membership helper functions designed to avoid recursive RLS. Security-definer helpers, if necessary, must have a fixed search_path, minimal execute grants, and tests.
 
+### Request transaction and tenant role
+
+A partner request resolves its principal as follows: verify the bearer token, then read
+the principal's active membership row. Both steps happen inside one transaction that has
+already entered the restricted `alia_app` role and published the verified claim as a
+transaction-local `request.jwt.claim.sub`, so the memberships policy itself is the
+boundary. A client-supplied organization identifier is refused rather than trusted.
+
+`alia_app` is NOLOGIN, has no superuser, no BYPASSRLS, and owns nothing; a scoped login
+role enters it with `set local role`. Every tenant transaction re-verifies that the live
+session is neither a superuser nor BYPASSRLS before running a statement, and a
+privileged role name is refused as configuration. The service role therefore cannot be
+reached from a partner request path at all, which is what AGENTS.md requires.
+
+Tenant-consistent composite foreign keys (`(organization_id, learner_id)` to
+`learners(organization_id, id)`, and `(organization_id, account_type)` to
+`organizations(id, account_type)` for organization memory) make a cross-tenant or
+shared-memory-in-an-individual-workspace row unrepresentable, independent of policy.
+
 ## Memory lifecycle
 
 Candidate -> pending review -> approved -> active use -> expired or retired.

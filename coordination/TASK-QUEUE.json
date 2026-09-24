@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "project": "Adaptive Learning Intelligence Agent",
-  "updated_at": "2026-09-24T11:19:26.000Z",
+  "updated_at": "2026-09-24T16:20:00.000Z",
   "release": {
     "name": "Founding-Pilot Alpha",
     "target_days": 7,
@@ -40,7 +40,7 @@
       "id": "ALIA-002",
       "phase": 2,
       "title": "Tenant identity, schema, and RLS proof",
-      "status": "ready",
+      "status": "completed",
       "priority": "P0",
       "estimated_hours": 10,
       "depends_on": ["ALIA-001"],
@@ -62,7 +62,7 @@
       "id": "ALIA-003",
       "phase": 3,
       "title": "Learning-event and mastery loop",
-      "status": "blocked",
+      "status": "ready",
       "priority": "P0",
       "estimated_hours": 8,
       "depends_on": ["ALIA-002"],
